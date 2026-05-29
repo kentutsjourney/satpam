@@ -80,6 +80,9 @@ bot.command('start', async (ctx) => {
 // =========================================================================
 // ACTION SAKLAR DEWA: TOGGLE ON/OFF BOT GLOBAL (MAINTENANCE) - VERSI FIXED
 // =========================================================================
+// =========================================================================
+// ACTION SAKLAR DEWA: TOGGLE ON/OFF BOT GLOBAL (MAINTENANCE) - FIXED RE-ON
+// =========================================================================
 bot.action('toggle_global_maintenance', async (ctx) => {
     try {
         const userId = ctx.from.id.toString();
@@ -97,9 +100,10 @@ bot.action('toggle_global_maintenance', async (ctx) => {
             return ctx.answerCbQuery('❌ Gagal membaca status database.', { show_alert: true });
         }
 
+        // Tentukan status berikutnya secara presisi
         const nextStatus = currentData ? !currentData.maintenance_status : true;
 
-        // 2. Update status baru ke DB
+        // 2. Update status baru ke DB sebelum kirim siaran
         const { error: updateError } = await supabase
             .from('bot_status')
             .update({ maintenance_status: nextStatus })
@@ -117,34 +121,37 @@ bot.action('toggle_global_maintenance', async (ctx) => {
 
         const messageBroadcast = nextStatus 
             ? '⚠️ **hampura** ⚠️\n\nBot Kentut lagi anuin anunya di iniin off in dulu yak!!'
-            : '✅ **BOT dah siap** ✅\n\ndah nyala';
+            : '✅ **BOT dah siap** ✅\n\ndah nyala kembali normal silakan pakai!';
 
         if (allGroups && allGroups.length > 0) {
             for (const group of allGroups) {
+              
                 try {
-                    // AMAN: Pastikan ID grup diconvert ke String agar Telegraf ga bingung
+                   
                     const targetChatId = group.group_id.toString().trim();
+                 
                     
+                    // Kirim siaran teks terlebih dahulu
                     const sentMsg = await ctx.telegram.sendMessage(targetChatId, messageBroadcast, { parse_mode: 'Markdown' });
                     
                     if (nextStatus) {
-                        // Gunakan catch internal per-grup supaya kalau bot ditendang dari 1 grup, grup lain ga ikut macet
+                        // Jika diubah ke OFF -> Pin pesan barusan
                         await ctx.telegram.pinChatMessage(targetChatId, sentMsg.message_id).catch((e) => {
                             console.log(`Gagal pin di grup ${targetChatId}:`, e.message);
                         });
                     } else {
-                        await ctx.telegram.unpinChatMessage(targetChatId, sentMsg.message_id).catch((e) => {
+                        // Jika diubah ke ON -> Unpin pesan pin teratas di grup tersebut secara universal (Aman & Anti-Crash!)
+                        await ctx.telegram.unpinChatMessage(targetChatId).catch((e) => {
                             console.log(`Gagal unpin di grup ${targetChatId}:`, e.message);
                         });
                     }
                 } catch (errSend) {
-                    // Log jika bot gagal kirim pesan (misal bot sudah di-kick dari grup itu tapi datanya masih ada di DB)
                     console.log(`Gagal siaran ke grup ${group.group_id}:`, errSend.message);
                 }
             }
         }
 
-        // 4. Render ulang menu dewa agar tombolnya langsung berubah warna indikatornya
+        // 4. Render ulang menu dengan forcedStatus yang presisi agar warna tombol sinkron instan
         return renderSettingsMenu(ctx, ctx.from.id, nextStatus);
 
     } catch (err) {
