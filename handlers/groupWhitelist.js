@@ -9,45 +9,39 @@ const userState = {};
 // =========================================================================
 // FUNCTION UTAMA UNTUK MERENDER LIST GRUP DI /setting
 // =========================================================================
-async function renderSettingsMenu(ctx, userId) {
+// Tambahkan parameter forcedStatus = null di paling atas
+async function renderSettingsMenu(ctx, userId, forcedStatus = null) {
     try {
         let allowedGroups = [];
         const cleanUserId = userId.toString().trim(); 
 
-        // Ambil data status maintenance global dari database
+       
         let isMaintenance = false;
-        try {
-            const { data: statusData } = await supabase.from('bot_status').select('maintenance_status').eq('id', 1).maybeSingle();
-            if (statusData) isMaintenance = statusData.maintenance_status;
-        } catch (e) {
-            console.error('Gagal mengambil status maintenance:', e);
+
+        // JIKA FORCEDSTATUS DIISI, LANGSUNG PAKAI. JIKA TIDAK, BARU AMBIL DARI DB
+        if (forcedStatus !== null) {
+            isMaintenance = forcedStatus;
+        } else {
+            try {
+                const { data: statusData } = await supabase.from('bot_status').select('maintenance_status').eq('id', 1).maybeSingle();
+                if (statusData) isMaintenance = statusData.maintenance_status;
+            } catch (e) {
+                console.error('Gagal mengambil status maintenance:', e);
+            }
         }
 
         if (cleanUserId === OWNER_ID) {
-            // DEWA: Ambil SEMUA grup dari tabel group_settings
-            const { data, error } = await supabase
-                .from('group_settings')
-                .select('group_id, group_name');
-            
+            const { data, error } = await supabase.from('group_settings').select('group_id, group_name');
             if (!error && data) allowedGroups = data;
         } else {
-            // OWNER LAIN: Cari di group_settings yang kolom group_owner_id-nya COCOK
-            const { data, error } = await supabase
-                .from('group_settings')
-                .select('group_id, group_name')
-                .eq('group_owner_id', cleanUserId);
-                
+            const { data, error } = await supabase.from('group_settings').select('group_id, group_name').eq('group_owner_id', cleanUserId);
             if (!error && data) allowedGroups = data;
         }
 
-        // JIKA OWNER GRUP LAIN BELUM ADA GRUP YANG TERDAFTAR ATAS ID DIA
+       
         if (allowedGroups.length === 0 && cleanUserId !== OWNER_ID) {
             const noGroupText = `WELKAM TO BOT SATPAM KENTUT\nPILIH GC MANA YANG ANDA MAU ATUR\n\n⚠️ Anda belum memiliki grup yang terdaftar di sistem kami.`;
-            
-            const errorKeyboard = [
-                [Markup.button.url('📞 Hubungi Owner Bot', 'https://t.me/arikamukunaon')]
-            ];
-
+            const errorKeyboard = [[Markup.button.url('📞 Hubungi Owner Bot', 'https://t.me/arikamukunaon')]];
             if (ctx.callbackQuery) {
                 return await ctx.editMessageText(noGroupText, Markup.inlineKeyboard(errorKeyboard));
             } else {
@@ -55,9 +49,7 @@ async function renderSettingsMenu(ctx, userId) {
             }
         }
 
-        const welcomeText = `WELKAM TO BOT SATPAM KENTUT\nPILIH GC MANA YANG ANDA MAU ATUR`;
-        
-        // Panggil modular keyboard dari file menus.js yang sudah menampung saklar dewa
+      const welcomeText = `WELKAM TO BOT SATPAM KENTUT\nPILIH GC MANA YANG ANDA MAU ATUR`;
         const finalKeyboard = getGroupSelectionMenu(allowedGroups, cleanUserId, isMaintenance);
 
         if (ctx.callbackQuery) {
@@ -153,7 +145,7 @@ bot.action('toggle_global_maintenance', async (ctx) => {
         }
 
         // 4. Render ulang menu dewa agar tombolnya langsung berubah warna indikatornya
-        return renderSettingsMenu(ctx, ctx.from.id);
+        return renderSettingsMenu(ctx, ctx.from.id, nextStatus);
 
     } catch (err) {
         console.error('Error total di handler maintenance:', err);
