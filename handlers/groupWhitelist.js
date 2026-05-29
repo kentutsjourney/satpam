@@ -85,20 +85,42 @@ bot.command('start', async (ctx) => {
 // =========================================================================
 // ACTION SAKLAR DEWA: TOGGLE ON/OFF BOT GLOBAL (MAINTENANCE)
 // =========================================================================
+// =========================================================================
+// ACTION SAKLAR DEWA: TOGGLE ON/OFF BOT GLOBAL (MAINTENANCE) - VERSI FIXED
+// =========================================================================
 bot.action('toggle_global_maintenance', async (ctx) => {
     try {
         const userId = ctx.from.id.toString();
         if (userId !== OWNER_ID) return ctx.answerCbQuery('❌ Akses Khusus Owner Utama!', { show_alert: true });
 
         // 1. Dapatkan status saat ini di DB
-        const { data: currentData } = await supabase.from('bot_status').select('maintenance_status').eq('id', 1).single();
-        const nextStatus = !currentData.maintenance_status;
+        const { data: currentData, error: fetchError } = await supabase
+            .from('bot_status')
+            .select('maintenance_status')
+            .eq('id', 1)
+            .maybeSingle();
+
+        if (fetchError) {
+            console.error('Error fetch status:', fetchError);
+            return ctx.answerCbQuery('❌ Gagal membaca status database.', { show_alert: true });
+        }
+
+        const nextStatus = currentData ? !currentData.maintenance_status : true;
 
         // 2. Update status baru ke DB
-        await supabase.from('bot_status').update({ maintenance_status: nextStatus }).eq('id', 1);
-        await ctx.answerCbQuery('Memproses perubahan status & broadcast ke semua grup... ⏳');
+        const { error: updateError } = await supabase
+            .from('bot_status')
+            .update({ maintenance_status: nextStatus })
+            .eq('id', 1);
 
-        // 3. Ambil seluruh grup aktif untuk dikirimi pesan siaran
+        if (updateError) {
+            console.error('Error update status:', updateError);
+            return ctx.answerCbQuery('❌ Gagal memperbarui status database.', { show_alert: true });
+        }
+
+        await ctx.answerCbQuery('Memproses perubahan status & siaran grup... ⏳');
+
+        // 3. Ambil seluruh grup aktif
         const { data: allGroups } = await supabase.from('group_settings').select('group_id');
 
         const messageBroadcast = nextStatus 
@@ -108,17 +130,24 @@ bot.action('toggle_global_maintenance', async (ctx) => {
         if (allGroups && allGroups.length > 0) {
             for (const group of allGroups) {
                 try {
-                    const sentMsg = await ctx.telegram.sendMessage(group.group_id, messageBroadcast, { parse_mode: 'Markdown' });
+                    // AMAN: Pastikan ID grup diconvert ke String agar Telegraf ga bingung
+                    const targetChatId = group.group_id.toString().trim();
+                    
+                    const sentMsg = await ctx.telegram.sendMessage(targetChatId, messageBroadcast, { parse_mode: 'Markdown' });
                     
                     if (nextStatus) {
-                        // Jika di-OFF-kan, pin pesannya biar terbaca semua member grup
-                        await ctx.telegram.pinChatMessage(group.group_id, sentMsg.message_id).catch(() => {});
+                        // Gunakan catch internal per-grup supaya kalau bot ditendang dari 1 grup, grup lain ga ikut macet
+                        await ctx.telegram.pinChatMessage(targetChatId, sentMsg.message_id).catch((e) => {
+                            console.log(`Gagal pin di grup ${targetChatId}:`, e.message);
+                        });
                     } else {
-                        // Jika di-ON-kan lagi, unpin pesannya biar bersih kembali
-                        await ctx.telegram.unpinChatMessage(group.group_id, sentMsg.message_id).catch(() => {});
+                        await ctx.telegram.unpinChatMessage(targetChatId, sentMsg.message_id).catch((e) => {
+                            console.log(`Gagal unpin di grup ${targetChatId}:`, e.message);
+                        });
                     }
                 } catch (errSend) {
-                    console.log(`Gagal kirim pesan ke grup ${group.group_id}:`, errSend.message);
+                    // Log jika bot gagal kirim pesan (misal bot sudah di-kick dari grup itu tapi datanya masih ada di DB)
+                    console.log(`Gagal siaran ke grup ${group.group_id}:`, errSend.message);
                 }
             }
         }
@@ -127,8 +156,8 @@ bot.action('toggle_global_maintenance', async (ctx) => {
         return renderSettingsMenu(ctx, ctx.from.id);
 
     } catch (err) {
-        console.error('Error toggling maintenance mode:', err);
-        await ctx.answerCbQuery('❌ Terjadi kesalahan internal.');
+        console.error('Error total di handler maintenance:', err);
+        await ctx.answerCbQuery('❌ Terjadi kesalahan fatal pada sistem.', { show_alert: true });
     }
 });
 
