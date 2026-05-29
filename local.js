@@ -45,6 +45,7 @@ require('./handlers/moderation');
 require('./handlers/antiFlood');
 require('./handlers/customCommands');
 require('./handlers/textFilter');
+require('../handlers/memberManagement');
 
 // Jalankan Bot
 bot.launch()

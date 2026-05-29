@@ -78,6 +78,7 @@ if (!global.botHandlersLoaded) {
     require('../handlers/antiFlood');
     require('../handlers/customCommands');
     require('../handlers/textFilter');
+    require('../handlers/memberManagement');
 
     // Tandai bahwa handler sudah sukses dimuat ke memori node process
     global.botHandlersLoaded = true;

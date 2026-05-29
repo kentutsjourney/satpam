@@ -23,7 +23,7 @@ function getMainSettingsMenu(settings, groupId) {
         ],
         [
             Markup.button.callback('⌨️ Panduan Command', `view_commands_${groupId}`),
-            Markup.button.callback('❌ Tutup Menu', 'close_settings')
+            Markup.button.callback('👥 Pengaturan Member', `manage_member_${groupId}`)
         ]
     ]);
 }
