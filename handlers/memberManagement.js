@@ -1,9 +1,6 @@
 const { Markup } = require('telegraf');
-
 const bot = require('../config/bot');
-
 const supabase = require('../config/supabase'); 
-
 const { getMainSettingsMenu } = require('../keyboards/menus'); 
 
 const PERMISSION_MAP = {
@@ -22,28 +19,31 @@ const PERMISSION_MAP = {
 };
 
 // =========================================================================
-// RENDER MENU UTAMA MANAJEMEN MEMBER
+// RENDER MENU UTAMA MANAJEMEN MEMBER (DENGAN FALLBACK OBJECT)
 // =========================================================================
-async function renderMemberPermissionsMenu(ctx, groupId) {
+async function renderMemberPermissionsMenu(ctx, groupId, forcedPermissions = null) {
     try {
-        console.log(`[DEBUG] Membaca data perizinan untuk grup ID: ${groupId}`);
-        
-        const chatInfo = await ctx.telegram.getChat(groupId);
-        const currentPermissions = chatInfo.permissions || {};
+        let currentPermissions = {};
+        let chatTitle = 'Grup Chat';
 
-        // PELACAK 1: Mari kita intip apa yang dikembalikan oleh Telegram ke Vercel Logs kamu
-        console.log('[DEBUG] Data Perizinan dari Telegram saat ini:', JSON.stringify(currentPermissions));
+        // Jika dipanggil setelah toggle, gunakan data lokal terbaru agar instan & anti-error
+        if (forcedPermissions) {
+            currentPermissions = forcedPermissions;
+        } else {
+            // Jika baru dibuka pertama kali, ambil dari Telegram
+            const chatInfo = await ctx.telegram.getChat(groupId);
+            chatTitle = chatInfo.title || chatTitle;
+            currentPermissions = chatInfo.permissions || {};
+        }
 
         let text = `👥 **MANAJEMEN PERIZINAN ANGGOTA GRUP**\n`;
-        text += `📌 **Grup:** ${chatInfo.title}\n`;
-        text += `ID: \`${groupId}\`\n\n`;
+        text += `📌 **ID Grup:** \`${groupId}\`\n\n`;
         text += `Silakan klik tombol di bawah untuk mengubah hak akses member biasa:\n`;
         text += `🟢 = **Diizinkan** | 🔴 = **Dilarang**`;
 
         const keyboardButtons = [];
 
         for (const [key, label] of Object.entries(PERMISSION_MAP)) {
-            // Jika undefined atau tidak bernilai false, kita anggap true (Hijau)
             const isAllowed = currentPermissions[key] !== false; 
             const indicator = isAllowed ? '🟢' : '🔴';
             
@@ -52,22 +52,20 @@ async function renderMemberPermissionsMenu(ctx, groupId) {
             ]);
         }
 
-
         keyboardButtons.push([Markup.button.callback('⬅️ Kembali ke Menu Utama', `back_to_main_${groupId}`)]);
 
         const finalKeyboard = Markup.inlineKeyboard(keyboardButtons);
 
         if (ctx.callbackQuery) {
-            await ctx.editMessageText(text, { parse_mode: 'Markdown', ...finalKeyboard });
+            await ctx.editMessageText(text, { parse_mode: 'Markdown', ...finalKeyboard }).catch(() => {});
         } else {
-            await ctx.reply(text, { parse_mode: 'Markdown', ...finalKeyboard });
+            await ctx.reply(text, { parse_mode: 'Markdown', ...finalKeyboard }).catch(() => {});
         }
     } catch (err) {
-        console.error('[ERROR] Gagal memuat menu perizinan member:', err);
-        await ctx.answerCbQuery('❌ Gagal memuat data grup. Pastikan bot masih menjadi admin!', { show_alert: true });
+        console.error('[ERROR] Gagal memuat menu perizinan member:', err.message);
+        await ctx.answerCbQuery('❌ Gagal memuat menu perizinan.', { show_alert: true });
     }
 }
-
 
 bot.action(/^manage_member_(.+)$/, async (ctx) => {
     const groupId = ctx.match[1];
@@ -75,14 +73,13 @@ bot.action(/^manage_member_(.+)$/, async (ctx) => {
     return renderMemberPermissionsMenu(ctx, groupId);
 });
 
-
 bot.action(/^back_to_main_(.+)$/, async (ctx) => {
     try {
         const groupId = ctx.match[1];
         await ctx.answerCbQuery('Kembali... ⏳');
         const { data: settings, error } = await supabase.from('group_settings').select('*').eq('group_id', groupId).single();
         if (error || !settings) return ctx.answerCbQuery('❌ Gagal memuat konfigurasi menu utama.', { show_alert: true });
-        const chatInfo = await ctx.telegram.getChat(groupId);
+        const chatInfo = await ctx.telegram.getChat(groupId).catch(() => ({ title: 'Grup Chat' }));
         let text = `⚙️ **PENGATURAN GRUP CHAT**\n📌 **Grup:** ${chatInfo.title}\nID: \`${groupId}\`\n\nSilakan pilih modul di bawah:`;
         return ctx.editMessageText(text, { parse_mode: 'Markdown', ...getMainSettingsMenu(settings, groupId) });
     } catch (err) {
@@ -91,54 +88,42 @@ bot.action(/^back_to_main_(.+)$/, async (ctx) => {
 });
 
 // =========================================================================
-
 // ACTION HANDLER: EKSKUSI PERUBAHAN SAKLAR PERIZINAN (TOGGLE)
-
 // =========================================================================
 bot.action(/^manage_perm_(-?\d+)_(.+)$/, async (ctx) => {
     try {
         const groupId = ctx.match[1];
         const permissionKey = ctx.match[2];
 
-        console.log(`[DEBUG] Tombol diklik! Key: ${permissionKey} pada Grup: ${groupId}`);
+        // Ganti pembacaan ke objek tombol inline yang aktif saat ini untuk menghindari getChat error
+        const replyMarkup = ctx.callbackQuery.message.reply_markup.inline_keyboard;
+        const currentPermissions = {};
 
-        const chatInfo = await ctx.telegram.getChat(groupId);
-        const tgPermissions = chatInfo.permissions || {};
+        // Rekonstruksi status perizinan berdasarkan warna emoji tombol saat ini di layar
+        let index = 0;
+        for (const key of Object.keys(PERMISSION_MAP)) {
+            const buttonText = replyMarkup[index][0].text;
+            currentPermissions[key] = buttonText.startsWith('🟢');
+            index++;
+        }
 
-
-        const currentPermissions = {
-            can_send_messages: tgPermissions.can_send_messages !== false,
-            can_send_audios: tgPermissions.can_send_audios !== false,
-            can_send_documents: tgPermissions.can_send_documents !== false,
-            can_send_photos: tgPermissions.can_send_photos !== false,
-            can_send_videos: tgPermissions.can_send_videos !== false,
-            can_send_video_notes: tgPermissions.can_send_video_notes !== false,
-            can_send_voice_notes: tgPermissions.can_send_voice_notes !== false,
-            can_send_polls: tgPermissions.can_send_polls !== false,
-            can_send_other_messages: tgPermissions.can_send_other_messages !== false,
-            can_add_web_page_previews: tgPermissions.can_add_web_page_previews !== false,
-            can_invite_users: tgPermissions.can_invite_users !== false,
-            can_pin_messages: tgPermissions.can_pin_messages !== false,
-        };
-
-        // Balikkan nilainya
+        // Jalankan logika pembalikan status (Toggle)
         const nextStatus = !currentPermissions[permissionKey];
         currentPermissions[permissionKey] = nextStatus;
 
-
+        // Logika Pengaman Induk Pesan Teks
         if (permissionKey === 'can_send_messages' && nextStatus === false) {
             currentPermissions.can_send_audios = false;
             currentPermissions.can_send_documents = false;
             currentPermissions.can_send_photos = false;
             currentPermissions.can_send_videos = false;
-            currentPermissions.can_send_voice_notes = false;
             currentPermissions.can_send_video_notes = false;
-
+            currentPermissions.can_send_voice_notes = false;
             currentPermissions.can_send_polls = false;
             currentPermissions.can_send_other_messages = false;
         }
 
-
+        // Sinkronisasi parameter internal media Telegram
         const anyMediaActive = 
             currentPermissions.can_send_photos || currentPermissions.can_send_videos || 
             currentPermissions.can_send_audios || currentPermissions.can_send_documents || 
@@ -146,24 +131,15 @@ bot.action(/^manage_perm_(-?\d+)_(.+)$/, async (ctx) => {
 
         currentPermissions.can_send_media_messages = anyMediaActive;
 
-        // PELACAK 2: Intip konfigurasi baru sebelum ditembakkan ke Telegram
-        console.log('[DEBUG] Mengirimkan Payload Perizinan Baru ke Telegram:', JSON.stringify(currentPermissions));
-
-        // Tembak ke Telegram
-        const success = await ctx.telegram.setChatPermissions(groupId, currentPermissions);
-        
-        // PELACAK 3: Lihat respon balik Telegram, apakah true (berhasil) atau false (diabaikan)
-        console.log(`[DEBUG] Hasil eksekusi Telegram setChatPermissions: ${success}`);
+        // Tembak perubahan perizinan ke Telegram grup
+        await ctx.telegram.setChatPermissions(groupId, currentPermissions);
 
         await ctx.answerCbQuery(`⚡ Perizinan diperbarui: ${nextStatus ? '🟢 Diizinkan' : '🔴 Dilarang'}`);
 
-        // Beri jeda 500 milidetik (0.5 detik) sebelum render ulang untuk meminimalisir Caching API Telegram
-        await new Promise(resolve => setTimeout(resolve, 500));
-
-        return renderMemberPermissionsMenu(ctx, groupId);
+        // Langsung lempar payload currentPermissions ke fungsi render (Anti-Delay, Anti-Error!)
+        return renderMemberPermissionsMenu(ctx, groupId, currentPermissions);
 
     } catch (err) {
-        // PELACAK 4: Jika Telegram melempar error tertulis (misalnya masalah hak admin)
         console.error('[ERROR FATAL] Gagal eksekusi saklar perizinan:', err.message);
         await ctx.answerCbQuery(`❌ Gagal: ${err.message}`, { show_alert: true });
     }
