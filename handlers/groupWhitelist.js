@@ -124,8 +124,8 @@ bot.action('toggle_global_maintenance', async (ctx) => {
         const { data: allGroups } = await supabase.from('group_settings').select('group_id');
 
         const messageBroadcast = nextStatus 
-            ? '⚠️ **PENGUMUMAN INTERNAL BOT** ⚠️\n\nBot Satpam dinonaktifkan untuk sementara waktu karena sedang dalam proses perbaikan/maintenance oleh Owner. Semua fitur moderasi dijeda sampai pemberitahuan selanjutnya. Mohon maklum!'
-            : '✅ **BOT KEMBALI ONLINE** ✅\n\nProses maintenance telah selesai! Bot Satpam kini sudah aktif kembali secara normal untuk menjaga grup ini. Silakan gunakan perintah seperti biasa.';
+            ? '⚠️ **hampura** ⚠️\n\nBot Kentut lagi anuin anunya di iniin off in dulu yak!!'
+            : '✅ **BOT dah siap** ✅\n\ndah nyala';
 
         if (allGroups && allGroups.length > 0) {
             for (const group of allGroups) {
