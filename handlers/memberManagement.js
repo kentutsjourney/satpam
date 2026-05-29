@@ -111,35 +111,70 @@ bot.action(/^back_to_main_(.+)$/, async (ctx) => {
 // =========================================================================
 // ACTION HANDLER: EKSKUSI PERUBAHAN SAKLAR PERIZINAN (TOGGLE)
 // =========================================================================
+// =========================================================================
+// ACTION HANDLER: EKSKUSI PERUBAHAN SAKLAR PERIZINAN (TOGGLE) - FIXED VERSION
+// =========================================================================
 bot.action(/^manage_perm_(-?\d+)_(.+)$/, async (ctx) => {
     try {
         const groupId = ctx.match[1];
         const permissionKey = ctx.match[2];
 
+        // 1. Ambil info chat terbaru dari Telegram
         const chatInfo = await ctx.telegram.getChat(groupId);
-        let currentPermissions = { ...chatInfo.permissions };
+        const tgPermissions = chatInfo.permissions || {};
 
-        const currentStatus = currentPermissions[permissionKey] !== false;
-        const nextStatus = !currentStatus;
-        
+        // 2. Definisikan semua key secara eksplisit (mengatasi masalah undefined dari Telegram)
+        const currentPermissions = {
+            can_send_messages: tgPermissions.can_send_messages !== false,
+            can_send_audios: tgPermissions.can_send_audios !== false,
+            can_send_documents: tgPermissions.can_send_documents !== false,
+            can_send_photos: tgPermissions.can_send_photos !== false,
+            can_send_videos: tgPermissions.can_send_videos !== false,
+            can_send_video_notes: tgPermissions.can_send_video_notes !== false,
+            can_send_voice_notes: tgPermissions.can_send_voice_notes !== false,
+            can_send_polls: tgPermissions.can_send_polls !== false,
+            can_send_other_messages: tgPermissions.can_send_other_messages !== false,
+            can_add_web_page_previews: tgPermissions.can_add_web_page_previews !== false,
+            can_invite_users: tgPermissions.can_invite_users !== false,
+            can_pin_messages: tgPermissions.can_pin_messages !== false,
+        };
+
+        // 3. Balikkan status perizinan yang diklik (Toggle)
+        const nextStatus = !currentPermissions[permissionKey];
         currentPermissions[permissionKey] = nextStatus;
 
-        // Aturan bawaan Telegram: Jika mematikan teks, semua media otomatis ikut mati
+        // 4. LOGIKA PENGAMAN TELEGRAM (Hubungan antar media):
+        
+        // A. Jika mematikan total pesan teks, semua media wajib mati
         if (permissionKey === 'can_send_messages' && nextStatus === false) {
-            currentPermissions.can_send_media_messages = false;
-            currentPermissions.can_send_photos = false;
-            currentPermissions.can_send_videos = false;
-            currentPermissions.can_send_voice_notes = false;
-            currentPermissions.can_send_video_notes = false;
             currentPermissions.can_send_audios = false;
             currentPermissions.can_send_documents = false;
-            currentPermissions.can_send_other_messages = false;
+            currentPermissions.can_send_photos = false;
+            currentPermissions.can_send_videos = false;
+            currentPermissions.can_send_video_notes = false;
+            currentPermissions.can_send_voice_notes = false;
             currentPermissions.can_send_polls = false;
+            currentPermissions.can_send_other_messages = false;
         }
 
+        // B. Sinkronisasi parameter internal can_send_media_messages bawaan Telegram
+        // Jika ada SALAH SATU media yang aktif, maka can_send_media_messages harus TRUE.
+        // Jika SEMUA media mati, baru can_send_media_messages boleh FALSE.
+        const anyMediaActive = 
+            currentPermissions.can_send_photos || 
+            currentPermissions.can_send_videos || 
+            currentPermissions.can_send_audios || 
+            currentPermissions.can_send_documents || 
+            currentPermissions.can_send_voice_notes || 
+            currentPermissions.can_send_video_notes;
+
+        currentPermissions.can_send_media_messages = anyMediaActive;
+
+        // 5. Kirim perubahan perizinan yang sudah rapi ke Telegram
         await ctx.telegram.setChatPermissions(groupId, currentPermissions);
         await ctx.answerCbQuery(`⚡ Perizinan diperbarui: ${nextStatus ? '🟢 Diizinkan' : '🔴 Dilarang'}`);
 
+        // 6. Refresh tampilan menu agar indikator tombol langsung berubah
         return renderMemberPermissionsMenu(ctx, groupId);
 
     } catch (err) {
