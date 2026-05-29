@@ -58,26 +58,45 @@ function getWelcomeConfigMenu(groupId, currentButtonsCount = 0) {
 }
 
 /**
- * 3. Menu Daftar Grup + Tombol Tambah Grup (DIUBAH SESUAI REQ)
+ * 3. Menu Daftar Grup + Tombol Tambah Grup + SAKLAR DEWA ON/OFF GLOBAL
+ * (Menerima parameter tambahan: userId dan maintenanceStatus)
  */
-function getGroupSelectionMenu(groups) {
+function getGroupSelectionMenu(groups, userId, maintenanceStatus = false) {
     const buttons = [];
+    const OWNER_ID = "1382446968"; // ID Kamu sebagai Owner Utama Bot
+
 
     if (!groups || groups.length === 0) {
-        // Jika user tidak memiliki grup yang terdaftar sebagai owner grup tersebut
+     
         buttons.push([Markup.button.callback('❌ Tidak ada grup anda yang terdaftar', 'noop')]);
     } else {
-        // Jika ada, tampilkan daftar grup miliknya
+        // Layar Dewa atau Owner Lain (Tergantung filter data di handler)
         groups.forEach(g => {
-            buttons.push([Markup.button.callback(`📁 ${g.group_name || `Grup (${g.group_id})`}`, `select_group_${g.group_id}`)]);
+            if (userId === OWNER_ID) {
+                // Tampilan Khusus Dewa: Ada nama grup dan tombol Hapus di sebelahnya
+                buttons.push([
+                    Markup.button.callback(`📁 ${g.group_name || `Grup (${g.group_id})`}`, `select_group_${g.group_id}`),
+                    Markup.button.callback(`❌ Hapus`, `confirm_delete_${g.group_id}`)
+                ]);
+            } else {
+                // Tampilan Owner Biasa: Hanya daftar grup miliknya saja
+                buttons.push([Markup.button.callback(`📁 ${g.group_name || `Grup (${g.group_id})`}`, `select_group_${g.group_id}`)]);
+            }
         });
     }
 
-    // Tombol khusus untuk kamu (Owner Bot) menambah whitelist grup baru
-    buttons.push([Markup.button.callback('➕ Tambahkan Grup Chat Owner Bot', 'start_add_whitelist')]);
+    // Tombol tambah grup (Hanya muncul jika yang akses adalah sang Dewa/Owner Bot)
+    if (userId === OWNER_ID) {
+        buttons.push([Markup.button.callback('➕ Tambahkan Grup Chat Owner Bot', 'start_whitelist_process')]);
+        
+        // KIR: FITUR DEWA SAKLAR ON/OFF GLOBAL DI SINI
+        const statusEmoji = maintenanceStatus ? '🔴 BOT: OFF (Maintenance)' : '🟢 BOT: ON (Normal)';
+        buttons.push([Markup.button.callback(statusEmoji, 'toggle_global_maintenance')]);
+    }
     
     return Markup.inlineKeyboard(buttons);
 }
+
 /**
  * 4. Menu hak akses admin
  */

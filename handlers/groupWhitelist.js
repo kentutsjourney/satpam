@@ -1,6 +1,7 @@
 const { Markup } = require('telegraf');
 const bot = require('../config/bot');
 const supabase = require('../config/supabase');
+const { getGroupSelectionMenu } = require('../keyboards/menus'); // Panggil menu terpusat kita
 
 const OWNER_ID = "1382446968"; // ID Kamu sebagai Owner Utama Bot
 const userState = {}; 
@@ -12,6 +13,15 @@ async function renderSettingsMenu(ctx, userId) {
     try {
         let allowedGroups = [];
         const cleanUserId = userId.toString().trim(); 
+
+        // Ambil data status maintenance global dari database
+        let isMaintenance = false;
+        try {
+            const { data: statusData } = await supabase.from('bot_status').select('maintenance_status').eq('id', 1).maybeSingle();
+            if (statusData) isMaintenance = statusData.maintenance_status;
+        } catch (e) {
+            console.error('Gagal mengambil status maintenance:', e);
+        }
 
         if (cleanUserId === OWNER_ID) {
             // DEWA: Ambil SEMUA grup dari tabel group_settings
@@ -25,12 +35,10 @@ async function renderSettingsMenu(ctx, userId) {
             const { data, error } = await supabase
                 .from('group_settings')
                 .select('group_id, group_name')
-                .eq('group_owner_id', cleanUserId); // Mencari berdasarkan kolom group_owner_id
+                .eq('group_owner_id', cleanUserId);
                 
             if (!error && data) allowedGroups = data;
         }
-
-        let keyboard = [];
 
         // JIKA OWNER GRUP LAIN BELUM ADA GRUP YANG TERDAFTAR ATAS ID DIA
         if (allowedGroups.length === 0 && cleanUserId !== OWNER_ID) {
@@ -47,32 +55,15 @@ async function renderSettingsMenu(ctx, userId) {
             }
         }
 
-        // ISI KEYBOARD JIKA GRUPNYA ADA
-        if (cleanUserId === OWNER_ID) {
-            // Layar Dewa: Muncul semua grup + tombol hapus
-            allowedGroups.forEach(group => {
-                keyboard.push([
-                    Markup.button.callback(`📁 ${group.group_name || group.group_id}`, `select_group_${group.group_id}`),
-                    Markup.button.callback(`❌ Hapus`, `confirm_delete_${group.group_id}`)
-                ]);
-            });
-            // Tombol tambah grup khusus kamu
-            keyboard.push([Markup.button.callback('➕ Tambahkan Grup Chat Owner Bot', 'start_whitelist_process')]);
-        } else {
-            // Layar Owner Lain: Cuma muncul tombol grup miliknya sendiri
-            allowedGroups.forEach(group => {
-                keyboard.push([
-                    Markup.button.callback(`📁 ${group.group_name || group.group_id}`, `select_group_${group.group_id}`)
-                ]);
-            });
-        }
-
         const welcomeText = `WELKAM TO BOT SATPAM KENTUT\nPILIH GC MANA YANG ANDA MAU ATUR`;
         
+        // Panggil modular keyboard dari file menus.js yang sudah menampung saklar dewa
+        const finalKeyboard = getGroupSelectionMenu(allowedGroups, cleanUserId, isMaintenance);
+
         if (ctx.callbackQuery) {
-            await ctx.editMessageText(welcomeText, Markup.inlineKeyboard(keyboard));
+            await ctx.editMessageText(welcomeText, finalKeyboard);
         } else {
-            await ctx.reply(welcomeText, Markup.inlineKeyboard(keyboard));
+            await ctx.reply(welcomeText, finalKeyboard);
         }
     } catch (err) {
         console.error('Error rendering main menu:', err);
@@ -89,6 +80,56 @@ bot.command('setting', async (ctx) => {
 bot.command('start', async (ctx) => {
     if (ctx.chat.type !== 'private') return;
     await ctx.reply('Selamat datang di Bot Satpam Kentut!\n\nSilakan ketik /setting untuk melihat dan mengonfigurasi grup chat Anda.');
+});
+
+// =========================================================================
+// ACTION SAKLAR DEWA: TOGGLE ON/OFF BOT GLOBAL (MAINTENANCE)
+// =========================================================================
+bot.action('toggle_global_maintenance', async (ctx) => {
+    try {
+        const userId = ctx.from.id.toString();
+        if (userId !== OWNER_ID) return ctx.answerCbQuery('❌ Akses Khusus Owner Utama!', { show_alert: true });
+
+        // 1. Dapatkan status saat ini di DB
+        const { data: currentData } = await supabase.from('bot_status').select('maintenance_status').eq('id', 1).single();
+        const nextStatus = !currentData.maintenance_status;
+
+        // 2. Update status baru ke DB
+        await supabase.from('bot_status').update({ maintenance_status: nextStatus }).eq('id', 1);
+        await ctx.answerCbQuery('Memproses perubahan status & broadcast ke semua grup... ⏳');
+
+        // 3. Ambil seluruh grup aktif untuk dikirimi pesan siaran
+        const { data: allGroups } = await supabase.from('group_settings').select('group_id');
+
+        const messageBroadcast = nextStatus 
+            ? '⚠️ **PENGUMUMAN INTERNAL BOT** ⚠️\n\nBot Satpam dinonaktifkan untuk sementara waktu karena sedang dalam proses perbaikan/maintenance oleh Owner. Semua fitur moderasi dijeda sampai pemberitahuan selanjutnya. Mohon maklum!'
+            : '✅ **BOT KEMBALI ONLINE** ✅\n\nProses maintenance telah selesai! Bot Satpam kini sudah aktif kembali secara normal untuk menjaga grup ini. Silakan gunakan perintah seperti biasa.';
+
+        if (allGroups && allGroups.length > 0) {
+            for (const group of allGroups) {
+                try {
+                    const sentMsg = await ctx.telegram.sendMessage(group.group_id, messageBroadcast, { parse_mode: 'Markdown' });
+                    
+                    if (nextStatus) {
+                        // Jika di-OFF-kan, pin pesannya biar terbaca semua member grup
+                        await ctx.telegram.pinChatMessage(group.group_id, sentMsg.message_id).catch(() => {});
+                    } else {
+                        // Jika di-ON-kan lagi, unpin pesannya biar bersih kembali
+                        await ctx.telegram.unpinChatMessage(group.group_id, sentMsg.message_id).catch(() => {});
+                    }
+                } catch (errSend) {
+                    console.log(`Gagal kirim pesan ke grup ${group.group_id}:`, errSend.message);
+                }
+            }
+        }
+
+        // 4. Render ulang menu dewa agar tombolnya langsung berubah warna indikatornya
+        return renderSettingsMenu(ctx, ctx.from.id);
+
+    } catch (err) {
+        console.error('Error toggling maintenance mode:', err);
+        await ctx.answerCbQuery('❌ Terjadi kesalahan internal.');
+    }
 });
 
 // =========================================================================
@@ -157,7 +198,7 @@ bot.on('message', async (ctx, next) => {
                     .insert([{ 
                         group_id: targetGroupId, 
                         group_name: chatTitle,
-                        group_owner_id: state.targetOwnerId // Di-insert ke kolom group_owner_id kamu
+                        group_owner_id: state.targetOwnerId
                     }]);
             } else {
                 // JIKA SUDAH ADA BARISNYA: Cukup update nama dan group_owner_id-nya
@@ -165,7 +206,7 @@ bot.on('message', async (ctx, next) => {
                     .from('group_settings')
                     .update({ 
                         group_name: chatTitle,
-                        group_owner_id: state.targetOwnerId // Di-update kolom group_owner_id kamu yang tadinya NULL
+                        group_owner_id: state.targetOwnerId
                     })
                     .eq('group_id', targetGroupId);
             }
@@ -208,7 +249,6 @@ bot.action(/^execute_delete_(.+)$/, async (ctx) => {
     if (ctx.from.id.toString() !== OWNER_ID) return ctx.answerCbQuery('❌ Akses Ditolak!');
 
     try {
-        // Karena cuma 1 tabel, hapus langsung dari group_settings
         await supabase.from('group_settings').delete().eq('group_id', groupId);
 
         await ctx.answerCbQuery('🔥 Grup berhasil dihapus dari database!', { show_alert: true });
